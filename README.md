@@ -79,6 +79,82 @@ docker run --rm -p 8002:8002 -v /var/log/nginx:/logs:ro -e LOG_PATHS=/logs janlo
 docker run --rm -p 8002:8002 -v "$PWD/logs:/logs" janlog
 ```
 
+## Remote server logs
+
+There are four practical patterns, depending on how much you want to install on the remote server.
+
+### Option A — Run JanLog on the server, tunnel the port (recommended)
+
+Install once on the remote server, then reach it through SSH so nothing is exposed publicly:
+
+```bash
+# on the remote server
+git clone https://github.com/askarali2024/JanLog && cd JanLog && npm install
+LOG_PATHS=/var/log/nginx,/var/log/myapp ALLOW_UI_PATHS=false npm start
+
+# keep it alive
+pm2 start server/index.js --name janlog
+```
+
+```bash
+# on your laptop — forward the port over SSH
+ssh -L 8002:localhost:8002 user@your-server
+```
+
+Then open `http://localhost:8002`. Full live streaming with sub-second latency, since JanLog reads the files locally on the server.
+
+### Option B — Mount the remote logs locally (zero install on server)
+
+```bash
+mkdir ~/remote-logs
+sshfs user@your-server:/var/log ~/remote-logs
+LOG_PATHS="$HOME/remote-logs/**/*.log" npm start
+```
+
+`fs.watch` events don't fire over sshfs, but JanLog's built-in 2-second safety poll re-stats every file and reads only the new bytes — so it works, with up to ~2s latency per line.
+
+### Option C — Pipe remote logs into a local file (quick one-off debugging)
+
+```bash
+# tail -F on the remote side handles rotation for you
+ssh user@your-server "tail -F /var/log/myapp/app.log" >> ./logs/remote-app.log
+npm start
+```
+
+Nothing to install remotely at all — JanLog just sees a locally growing file.
+
+### Option D — Docker on the server
+
+```bash
+docker run -d --name janlog -p 127.0.0.1:8002:8002 \
+  -v /var/log:/logs:ro \
+  -e LOG_PATHS=/logs \
+  -e ALLOW_UI_PATHS=false \
+  janlog   # after: docker build -t janlog . on the server
+```
+
+Note `-p 127.0.0.1:8002:8002` — binding to loopback only, so it's reachable via SSH tunnel but not from the internet.
+
+### Security checklist for remote setups
+
+- **JanLog has no authentication.** Anyone who can reach the port can read your logs — never expose it directly to the public internet. Always tunnel (`ssh -L`), use a VPN, or put it behind a reverse proxy with auth:
+
+  ```nginx
+  location /janlog/ {
+      auth_basic "JanLog";
+      auth_basic_user_file /etc/nginx/.htpasswd;
+      proxy_pass http://127.0.0.1:8002/;
+      proxy_http_version 1.1;
+      proxy_set_header Connection '';   # needed for SSE
+      proxy_buffering off;              # needed for SSE
+  }
+  ```
+
+- **Set `ALLOW_UI_PATHS=false` on remote servers.** The Add-Path feature accepts any filesystem path, so on a shared box you don't want strangers adding `/etc/...` to the watch list.
+- Log files must be readable by the user running JanLog (add your user to the right group, e.g. `adm` on Debian/Ubuntu, or run under `sudo -u syslog`).
+
+**Rule of thumb:** Option A with pm2 for a permanent setup, Option C for quick one-off debugging sessions.
+
 ## Configuration
 
 | Variable            | Default  | Description                                                            |
@@ -115,7 +191,7 @@ docker run --rm -p 8002:8002 -v "$PWD/logs:/logs" janlog
 
 ## Notes
 
-- **Security:** JanLog is a development/ops tool intended to run behind a trusted boundary. It serves file contents from configured paths to anyone who can reach the port — don't expose it directly to the public internet (put it behind your VPN / SSH tunnel / auth proxy).
+- **Security:** JanLog is a development/ops tool intended to run behind a trusted boundary. It serves file contents from configured paths to anyone who can reach the port — don't expose it directly to the public internet (see [Remote server logs](#remote-server-logs) for tunneling and auth-proxy setup).
 - **Rotation styles:** both `rename + recreate` (logrotate default) and in-place truncation (`copytruncate`) are handled.
 - **File formats:** any text file works; files discovered inside directories must have a log-ish extension (`.log`, `.txt`, `.out`, `.err`, `.json`, `.jsonl`, `.ndjson`, `.trace`). Other files can be watched by naming them explicitly in `LOG_PATHS`.
 - Lines are never length-capped; the `MAX_BUFFER_LINES` bound limits line *count*, not length.
