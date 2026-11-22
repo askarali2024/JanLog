@@ -1,0 +1,25 @@
+{
+  "name": "janlog",
+  "version": "1.0.0",
+  "description": "Lightweight, self-hosted real-time log tailer and error watcher — a web-based alternative to tail -f / lnav.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "demo-logs": "node scripts/demo-logs.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "keywords": [
+    "logs",
+    "tail",
+    "streaming",
+    "sse",
+    "devtools",
+    "observability"
+  ],
+  "license": "MIT"
+}
